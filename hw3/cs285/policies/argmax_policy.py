@@ -7,11 +7,14 @@ class ArgMaxPolicy(object):
         self.critic = critic
 
     def get_action(self, obs):
-        if len(obs.shape) > 3:
+        if len(obs.shape) > 3: # adds batch dimension if needed
             observation = obs
         else:
             observation = obs[None]
         
-        ## TODO return the action that maxinmizes the Q-value 
+        ## return the action that maxinmizes the Q-value 
         # at the current observation as the output
+
+        qvals = self.critic.qa_values(observation)
+        action = np.argmax(qvals, axis=1)
         return action.squeeze()

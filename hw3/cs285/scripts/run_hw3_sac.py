@@ -45,6 +45,7 @@ class SAC_Trainer(object):
 
         self.rl_trainer = RL_Trainer(self.params)
 
+
     def run_training_loop(self):
         self.rl_trainer.run_sac_training_loop(
             self.params['n_iter'],

@@ -1,5 +1,6 @@
 import abc
 import itertools
+from cs285.infrastructure import utils
 from torch import nn
 from torch.nn import functional as F
 from torch import optim
@@ -7,6 +8,7 @@ from torch import optim
 import numpy as np
 import torch
 from torch import distributions
+
 
 from cs285.infrastructure import pytorch_util as ptu
 from cs285.policies.base_policy import BasePolicy
@@ -34,14 +36,12 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
         self.discrete = discrete
         self.size = size
         self.learning_rate = learning_rate
-        self.training = training
-        self.nn_baseline = nn_baseline
-
-        if self.discrete:
-            self.logits_na = ptu.build_mlp(input_size=self.ob_dim,
+        self.training = training# TODO store the result of taking this action into the replay buffer
+        self.logits_na = ptu.build_mlp(input_size=self.ob_dim,
                                            output_size=self.ac_dim,
                                            n_layers=self.n_layers,
                                            size=self.size)
+        if self.discrete:
             self.logits_na.to(ptu.device)
             self.mean_net = None
             self.logstd = None
@@ -86,7 +86,14 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
 
     # query the policy with observation(s) to get selected action(s)
     def get_action(self, obs: np.ndarray) -> np.ndarray:
-        # TODO: get this from hw1 or hw2
+        if len(obs.shape) > 1:
+            observation = obs
+        else:
+            observation = obs[None]
+
+        action_distribution = self.forward(ptu.from_numpy(observation))
+        action = action_distribution.sample()
+        
         return action
 
     # update/train this policy
@@ -99,7 +106,12 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
     # return more flexible objects, such as a
     # `torch.distributions.Distribution` object. It's up to you!
     def forward(self, observation: torch.FloatTensor):
-        # TODO: get this from hw1 or hw2
+        if self.discrete:
+            logits = self.logits_na(observation)
+            action_distribution = distributions.Categorical(logits=logits)
+        else:
+            mean = self.mean_net(observation)
+            action_distribution = distributions.Normal(mean, torch.exp(self.logstd))
         return action_distribution
 
 
@@ -109,5 +121,35 @@ class MLPPolicy(BasePolicy, nn.Module, metaclass=abc.ABCMeta):
 
 class MLPPolicyAC(MLPPolicy):
     def update(self, observations, actions, adv_n=None):
-        # TODO: update the policy and return the loss
+        # TODO: compute the loss that should be optimized when training with policy gradient
+        # HINT1: Recall that the expression that we want to MAXIMIZE
+            # is the expectation over collected trajectories of:
+            # sum_{t=0}^{T-1} [grad [log pi(a_t|s_t) * (Q_t - b_t)]]
+        # HINT2: you will want to use the `log_prob` method on the distribution returned
+            # by the `forward` method
+        # HINT3: don't forget that `optimizer.step()` MINIMIZES a loss
+
+        advantages = ptu.from_numpy(adv_n)
+        observations = ptu.from_numpy(observations)
+        actions = ptu.from_numpy(actions)
+
+
+        distribution = self.forward(observations)
+
+        log_prob = distribution.log_prob(actions)
+        
+        if not self.discrete: # for case when actions have more than one dimension, ie a = [0.1, -0.3, 0.5]
+            log_prob = torch.sum(log_prob, dim=1)
+
+    
+        loss = -log_prob * advantages # negative because optimizer minimizes loss, but we want to maximize the expression
+        loss = torch.mean(loss)
+
+
+        # TODO: optimize `loss` using `self.optimizer`
+        # HINT: remember to `zero_grad` first
+        self.optimizer.zero_grad() 
+        loss.backward()
+        self.optimizer.step()
+        
         return loss.item()

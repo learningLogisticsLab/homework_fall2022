@@ -2,6 +2,7 @@ import math
 from torch import distributions as dist
 import torch.nn.functional as F
 import torch.nn as nn
+import numpy as np
 
 
 def soft_update_params(net, target_net, tau):

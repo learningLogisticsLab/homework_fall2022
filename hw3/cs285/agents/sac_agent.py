@@ -60,29 +60,35 @@ class SACAgent(BaseAgent):
         re_n = ptu.from_numpy(re_n)
         terminal_n = ptu.from_numpy(terminal_n)
         
-        ac_dis = self.actor(ob_no)
-        
-        next_ac = ac_dis.sample()
-        log_probs = ac_dis.log_prob(next_ac)
-        log_probs = log_probs.squeeze().sum(dim=1)
-        q1, q2 = self.critic(ob_no, next_ac)
-        q = torch.min(q1, q2).squeeze()
-        target = re_n + self.gamma * (1 - terminal_n) * (q - self.actor.alpha * log_probs).squeeze()
-        target = target.detach()
-        q1, q2 = self.critic(ob_no, next_ac)
+
+
+        with torch.no_grad():
+            ac_dis = self.actor(next_ob_no)
+            next_ac = ac_dis.sample()
+
+            log_probs = ac_dis.log_prob(next_ac)
+            log_probs = log_probs.sum(dim=1)
+
+            q1, q2 = self.critic(next_ob_no, next_ac)
+            q = torch.min(q1, q2).squeeze()
+
+            target = re_n + self.gamma * (1 - terminal_n) * (q - self.actor.alpha * log_probs)
+            target = target.detach()
+        q1, q2 = self.critic(ob_no, ac_na)
         q1 = q1.squeeze()
         q2 = q2.squeeze()
 
         assert q1.shape == q2.shape == target.shape 
         
-        self.critic.optimizer.zero_grad()
         critic_loss_1 = self.critic.loss(q1, target)
         critic_loss_2 = self.critic.loss(q2, target)
         critic_loss = critic_loss_1 + critic_loss_2
+        
+        self.critic.optimizer.zero_grad()
         critic_loss.backward()
         self.critic.optimizer.step()
 
-        return critic_loss
+        return critic_loss.item()
 
     def train(self, ob_no, ac_na, re_n, next_ob_no, terminal_n):
         # TODO 
@@ -90,6 +96,7 @@ class SACAgent(BaseAgent):
         # for agent_params['num_critic_updates_per_agent_update'] steps,
         #     update the critic
 
+        self.training_step += 1
 
         critic_loss = 0
         for _ in range(self.agent_params['num_critic_updates_per_agent_update']):
@@ -108,7 +115,7 @@ class SACAgent(BaseAgent):
         actor_loss = 0
         alpha_loss = 0
         alpha = 0
-        if self.training_step %self.actor_update_frequency == 0:
+        if self.training_step % self.actor_update_frequency == 0:
             for _ in range(self.agent_params['num_actor_updates_per_agent_update']):
                loss, a_loss, alpha = self.actor.update(ob_no, self.critic)
                actor_loss += loss
@@ -117,9 +124,9 @@ class SACAgent(BaseAgent):
 
         # 4. gather losses for logging
         loss = OrderedDict()
-        loss['Critic_Loss'] = critic_loss
-        loss['Actor_Loss'] = actor_loss
-        loss['Alpha_Loss'] = alpha_loss
+        loss['Critic_Loss'] = critic_loss / self.agent_params['num_critic_updates_per_agent_update']
+        loss['Actor_Loss'] = actor_loss / self.agent_params['num_actor_updates_per_agent_update']
+        loss['Alpha_Loss'] = alpha_loss / self.agent_params['num_actor_updates_per_agent_update']
         loss['Temperature'] = alpha
 
         return loss

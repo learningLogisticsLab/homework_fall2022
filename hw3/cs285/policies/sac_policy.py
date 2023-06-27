@@ -51,12 +51,13 @@ class MLPPolicySAC(MLPPolicy):
 
 
         dis = self.forward(obs)
-        action = None
         if sample:
-            action = ptu.to_numpy(dis.sample())
+            action = dis.sample()
         else:
-            action =  ptu.to_numpy(dis.mean)
-        return action
+            action = dis.mean
+
+        action = torch.clip(action, self.action_range[0], self.action_range[1])
+        return ptu.to_numpy(action)
     # This function defines the forward pass of the network.
     # You can return anything you want, but you should be able to differentiate
     # through it. For example, you can return a torch.FloatTensor. You can also
@@ -88,33 +89,26 @@ class MLPPolicySAC(MLPPolicy):
 
         obs = ptu.from_numpy(obs)
 
-        action = self.get_action(obs)
-        dis = self.forward(obs)
-        action = dis.sample()
+        dis = self(obs)
+        action = dis.rsample()
 
 
         q1, q2 = critic(obs, action)
         q = torch.min(q1, q2)
 
         log_probs = dis.log_prob(action).sum(axis=1)
- 
-        loss = -torch.mean(q.detach() - self.alpha.detach() * log_probs)
+        loss = torch.mean(-q + self.alpha * log_probs)
         
-
-
+        
         # update policy
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        for p in self.mean_net.parameters():
-            if torch.isnan(p).any():
-                print("mean net after update  has nan")
-        
         # update temperature
         self.log_alpha_optimizer.zero_grad()
-        alpha_loss = (self.log_alpha * (-log_probs.detach() + self.target_entropy).mean())
+        alpha_loss = -(self.alpha * (log_probs + self.target_entropy).detach()).mean()
         alpha_loss.backward()
         self.log_alpha_optimizer.step()
 
-        return loss.item(), alpha_loss, self.alpha
+        return loss.item(), alpha_loss.item(), self.alpha
